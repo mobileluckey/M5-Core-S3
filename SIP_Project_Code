@@ -1,0 +1,442 @@
+#include <M5CoreS3.h>
+#include <WiFi.h>
+#include <TinyGPS++.h>
+
+// Global variables
+int declineCount = 0;  // Initialize decline count to 0
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(1);  // Assuming GPS is on Serial1 (adjust RX/TX pins as necessary)
+m5::touch_state_t prev_state = m5::touch_state_t::none;  // Initialize to a default state
+
+// Screen state enumeration
+enum ScreenState {
+    SPLASH_SCREEN,
+    MAIN_MENU,
+    NEW_LESSON,
+    VOCABULARY_PRACTICE,
+    SENTENCE_PRACTICE,
+    RESUME_LESSON,
+    EXIT_CONFIRMATION,
+    FAREWELL_SCREEN,
+    BLANK_SCREEN,
+    WAKE_UP_PROMPT
+};
+
+// Screen state and timing variables
+ScreenState currentScreen = SPLASH_SCREEN;
+unsigned long splashStartTime = 0;
+unsigned long farewellStartTime = 0;
+unsigned long wakeUpStartTime = 0;
+int currentVocabularyIndex = 0;
+int currentSentenceIndex = 0;
+int randomMinutes = 0;  // Placeholder initialization
+
+// Vocabulary and sentence arrays
+String vocabulary[] = {"Hello", "Goodbye"};
+String sentences[] = {"Hello, how are you?", "Goodbye, see you later."};
+
+// Function declarations
+void setup(void);
+void loop(void);
+void setupSplashScreen();
+void playSplashSound();
+void setupMainMenu();
+void setupNewLessonScreen();
+void setupVocabularyPracticeScreen();
+void setupSentencePracticeScreen();
+void setupResumeLessonScreen();
+void setupExitConfirmationScreen();
+void setupFarewellScreen();
+void setupBlankScreen();
+void handleTouch();
+void checkSpeedAndDecide();
+void wakeUpAndAskUser();
+void goToLightSleep(int delayMinutes);
+int generateRandomInterval();
+void playDontStopBelievinSound();
+void playWindows95ShutdownSound();
+
+// Function definition for generating a random interval
+int generateRandomInterval() {
+    return random(5, 25);  // Generates a random interval between 5 and 25 minutes
+}
+
+// Initialize the randomMinutes with a random value
+void initializeRandomMinutes() {
+    randomMinutes = generateRandomInterval();
+}
+
+void setup(void) {
+    auto cfg = M5.config();
+    CoreS3.begin(cfg);
+    M5.Speaker.begin();
+    gpsSerial.begin(9600, SERIAL_8N1, 44, 43);  // Adjust RX/TX pins as necessary
+
+    // Initialize the randomMinutes variable
+    initializeRandomMinutes();
+
+    // Display the splash screen with sound
+    setupSplashScreen();
+    delay(3000);  // Show the splash screen for 3 seconds
+
+    // Initial user prompt on startup
+    setupMainMenu();
+}
+
+void loop(void) {
+    CoreS3.update();
+
+    if (currentScreen == SPLASH_SCREEN && millis() - splashStartTime > 3000) {
+        setupMainMenu();
+    } else if (currentScreen == FAREWELL_SCREEN && millis() - farewellStartTime > 3000) {
+        CoreS3.Display.fillScreen(BLACK);
+    } else if (currentScreen == WAKE_UP_PROMPT && millis() - wakeUpStartTime > 120000) {
+        // If no response within 2 minutes, go back to sleep
+        goToLightSleep(-1);
+    } else {
+        handleTouch();
+    }
+}
+
+void setupSplashScreen() {
+    // Clear the display and set up the background
+    CoreS3.Display.fillScreen(BLACK);
+    
+    // Set the text color and alignment
+    CoreS3.Display.setTextColor(RED);  // Set text color to red
+    CoreS3.Display.setTextDatum(middle_center);  // Center the text
+    CoreS3.Display.setFont(&fonts::DejaVu18);  // Choose a font (adjust as needed)
+    
+    // Display the splash screen text
+    CoreS3.Display.drawString("TutiTech - Language Tutor", CoreS3.Display.width() / 2, CoreS3.Display.height() / 2);
+    
+    // Play the "Shave and a Haircut" sound
+    playSplashSound();
+}
+
+void setupMainMenu() {
+    CoreS3.Display.fillScreen(BLACK);
+    CoreS3.Display.drawString("Main Menu", CoreS3.Display.width() / 2, 40);
+
+    CoreS3.Display.drawRect(45, 80, 230, 40, RED);
+    CoreS3.Display.drawString("Start Lesson", CoreS3.Display.width() / 2, 100);
+
+    CoreS3.Display.drawRect(45, 130, 230, 40, RED);
+    CoreS3.Display.drawString("Saved Lesson", CoreS3.Display.width() / 2, 150);
+
+    CoreS3.Display.drawRect(45, 180, 230, 40, RED);
+    CoreS3.Display.drawString("Exit", CoreS3.Display.width() / 2, 200);
+
+    currentScreen = MAIN_MENU;
+}
+
+void setupNewLessonScreen() {
+    CoreS3.Display.fillScreen(BLACK);
+    CoreS3.Display.drawString("Lesson: Greetings", CoreS3.Display.width() / 2, 40);
+
+    CoreS3.Display.drawRect(45, 80, 230, 40, GREEN);
+    CoreS3.Display.drawString("Vocabulary", CoreS3.Display.width() / 2, 100);
+
+    CoreS3.Display.drawRect(45, 130, 230, 40, GREEN);
+    CoreS3.Display.drawString("Sentences", CoreS3.Display.width() / 2, 150);
+
+    CoreS3.Display.drawRect(45, 180, 230, 40, GREEN);
+    CoreS3.Display.drawString("Main Menu", CoreS3.Display.width() / 2, 200);
+
+    currentScreen = NEW_LESSON;
+}
+
+void setupVocabularyPracticeScreen() {
+    if (currentVocabularyIndex >= 2) {
+        currentVocabularyIndex = 0;
+        setupNewLessonScreen();
+        return;
+    }
+    
+    CoreS3.Display.fillScreen(BLACK);
+    CoreS3.Display.drawString("Vocabulary Practice", CoreS3.Display.width() / 2, 40);
+    CoreS3.Display.drawString(vocabulary[currentVocabularyIndex], CoreS3.Display.width() / 2, CoreS3.Display.height() / 2 - 20);
+
+    CoreS3.Display.drawRect(45, 180, 230, 40, GREEN);
+    CoreS3.Display.drawString("Next", CoreS3.Display.width() / 2, 200);
+
+    currentScreen = VOCABULARY_PRACTICE;
+}
+
+void setupSentencePracticeScreen() {
+    if (currentSentenceIndex >= 2) {
+        currentSentenceIndex = 0;
+        setupNewLessonScreen();
+        return;
+    }
+    
+    CoreS3.Display.fillScreen(BLACK);
+    CoreS3.Display.drawString("Sentence Practice", CoreS3.Display.width() / 2, 40);
+    CoreS3.Display.drawString(sentences[currentSentenceIndex], CoreS3.Display.width() / 2, CoreS3.Display.height() / 2 - 20);
+
+    CoreS3.Display.drawRect(45, 180, 230, 40, GREEN);
+    CoreS3.Display.drawString("Next", CoreS3.Display.width() / 2, 200);
+
+    currentScreen = SENTENCE_PRACTICE;
+}
+
+void setupResumeLessonScreen() {
+    CoreS3.Display.fillScreen(BLACK);
+    CoreS3.Display.drawString("Saved Lesson", CoreS3.Display.width() / 2, 40);
+    // List the last three saved sessions here
+    currentScreen = RESUME_LESSON;
+}
+
+void setupExitConfirmationScreen() {
+    CoreS3.Display.fillScreen(BLACK);
+    CoreS3.Display.drawString("Are you sure you want to exit?", CoreS3.Display.width() / 2, 40);
+
+    CoreS3.Display.drawRect(45, 100, 220, 40, YELLOW);
+    CoreS3.Display.drawString("Yes", CoreS3.Display.width() / 2, 120);
+
+    CoreS3.Display.drawRect(45, 150, 220, 40, YELLOW);
+    CoreS3.Display.drawString("No", CoreS3.Display.width() / 2, 170);
+
+    currentScreen = EXIT_CONFIRMATION;
+}
+
+void setupFarewellScreen() {
+    CoreS3.Display.fillScreen(BLACK);
+    CoreS3.Display.drawString("Goodbye!", CoreS3.Display.width() / 2, CoreS3.Display.height() / 2);
+
+    // Play the Windows 95 shutdown sound
+    playWindows95ShutdownSound();
+
+    delay(3000);  // Optional delay to show the goodbye message for 3 seconds
+    
+    // Clear the screen before going to light sleep
+    CoreS3.Display.fillScreen(BLACK);
+    
+    goToLightSleep(-1);  // Enter light sleep mode after displaying the farewell message
+}
+
+void setupBlankScreen() {
+    // Fill the screen with black (blank screen)
+    CoreS3.Display.fillScreen(BLACK);
+    currentScreen = BLANK_SCREEN;  // Set the current screen state
+
+    while (true) {
+        CoreS3.update();  // Update the M5CoreS3 state, including touch inputs
+        auto t = CoreS3.Touch.getDetail();  // Get touch details
+
+        if (t.state == 3) {  // TOUCH_BEGIN - a touch was detected
+            setupMainMenu();  // Transition to the main menu
+            break;  // Exit the loop after transitioning to the main menu
+        }
+    }
+}
+
+void handleTouch() {
+    auto t = CoreS3.Touch.getDetail();
+    if (prev_state != t.state) {
+        prev_state = t.state;
+
+        if (t.state == 3) { // TOUCH_BEGIN
+            // Play a sound on touch
+            M5.Speaker.tone(750, 100); // 750 Hz frequency, 100 ms duration
+        }
+
+        if (currentScreen == MAIN_MENU && t.state == 3) { // TOUCH_BEGIN
+            if (t.y > 80 && t.y < 120) {
+                CoreS3.Display.fillRect(45, 80, 230, 40, GREEN);
+                CoreS3.Display.drawString("Start Lesson", CoreS3.Display.width() / 2, 100);
+                delay(200);
+                setupNewLessonScreen();
+            } else if (t.y > 130 && t.y < 170) {
+                CoreS3.Display.fillRect(45, 130, 230, 40, GREEN);
+                CoreS3.Display.drawString("Saved Lesson", CoreS3.Display.width() / 2, 150);
+                delay(200);
+                setupResumeLessonScreen();
+            } else if (t.y > 180 && t.y < 220) {
+                CoreS3.Display.fillRect(45, 180, 230, 40, GREEN);
+                CoreS3.Display.drawString("Exit", CoreS3.Display.width() / 2, 200);
+                delay(200);
+                setupExitConfirmationScreen();
+            }
+        } else if (currentScreen == NEW_LESSON && t.state == 3) { // TOUCH_BEGIN
+            if (t.y > 80 && t.y < 120) {
+                CoreS3.Display.fillRect(45, 80, 230, 40, GREEN);
+                CoreS3.Display.drawString("Vocabulary", CoreS3.Display.width() / 2, 100);
+                delay(200);
+                setupVocabularyPracticeScreen();
+            } else if (t.y > 130 && t.y < 170) {
+                CoreS3.Display.fillRect(45, 130, 230, 40, GREEN);
+                CoreS3.Display.drawString("Sentences", CoreS3.Display.width() / 2, 150);
+                delay(200);
+                setupSentencePracticeScreen();
+            } else if (t.y > 180 && t.y < 220) {
+                CoreS3.Display.fillRect(45, 180, 230, 40, GREEN);
+                CoreS3.Display.drawString("Main Menu", CoreS3.Display.width() / 2, 200);
+                delay(200);
+                setupMainMenu();
+            }
+        } else if (currentScreen == VOCABULARY_PRACTICE && t.state == 3) { // TOUCH_BEGIN
+            CoreS3.Display.fillRect(45, 180, 230, 40, GREEN);
+            CoreS3.Display.drawString("Next", CoreS3.Display.width() / 2, 200);
+            delay(200);
+            currentVocabularyIndex++;
+            setupVocabularyPracticeScreen();
+        } else if (currentScreen == SENTENCE_PRACTICE && t.state == 3) { // TOUCH_BEGIN
+            CoreS3.Display.fillRect(45, 180, 230, 40, GREEN);
+            CoreS3.Display.drawString("Next", CoreS3.Display.width() / 2, 200);
+            delay(200);
+            currentSentenceIndex++;
+            setupSentencePracticeScreen();
+        } else if (currentScreen == EXIT_CONFIRMATION && t.state == 3) { // TOUCH_BEGIN
+            if (t.y > 100 && t.y < 140) {
+                CoreS3.Display.fillRect(45, 100, 220, 40, YELLOW);
+                CoreS3.Display.drawString("Yes", CoreS3.Display.width() / 2, 120);
+                delay(200);
+                setupFarewellScreen();
+            } else if (t.y > 150 && t.y < 190) {
+                CoreS3.Display.fillRect(45, 150, 220, 40, YELLOW);
+                CoreS3.Display.drawString("No", CoreS3.Display.width() / 2, 170);
+                delay(200);
+                setupMainMenu();
+            }
+        } else if (currentScreen == WAKE_UP_PROMPT && t.state == 3) { // TOUCH_BEGIN
+            if (t.y > 100 && t.y < 140) {  // "Yes" button pressed
+                CoreS3.Display.fillRect(40, 100, 220, 40, GREEN);
+                CoreS3.Display.drawString("Yes", CoreS3.Display.width() / 2, 120);
+                delay(200);
+                setupMainMenu();  // Go to the main menu
+                declineCount = 0;  // Reset decline counter
+            } else if (t.y > 150 && t.y < 190) {  // "No" button pressed
+                CoreS3.Display.fillRect(40, 150, 220, 40, RED);
+                CoreS3.Display.drawString("No", CoreS3.Display.width() / 2, 170);
+                delay(200);
+                declineCount++;
+
+                if (declineCount >= 2) {
+                    goToLightSleep(60 + generateRandomInterval());  // Sleep for 60 minutes + random interval
+                } else {
+                    goToLightSleep(-1);  // Go back to sleep and wake up randomly
+                }
+            }
+        }
+    }
+}
+
+
+void checkSpeedAndDecide() {
+    float speed = 0;
+    unsigned long startTime = millis();
+
+    // Read GPS data for a short period (e.g., 5 seconds)
+    while (millis() - startTime < 5000) {
+        while (gpsSerial.available()) {
+            gps.encode(gpsSerial.read());
+        }
+        if (gps.speed.isUpdated()) {
+            speed = gps.speed.mph();
+        }
+    }
+
+    if (speed < 5.0) {
+        // If speed is under 5 mph, wake up fully and ask the user
+        wakeUpAndAskUser();
+    } else {
+        // Otherwise, go back to sleep
+        goToLightSleep(-1);
+    }
+}
+
+void wakeUpAndAskUser() {
+    // Play the "Don't Stop Believin'" sound
+    playDontStopBelievinSound();
+    
+    // Display the prompt asking the user if they want to start a lesson
+    CoreS3.Display.fillScreen(BLACK);
+    CoreS3.Display.drawString("Do you want a lesson?", CoreS3.Display.width() / 2, 60, CoreS3.Display.height() / 2);
+
+    CoreS3.Display.drawRect(40, 100, 220, 40, GREEN);
+    CoreS3.Display.drawString("Yes", CoreS3.Display.width() / 2, 120);
+
+    CoreS3.Display.drawRect(40, 150, 220, 40, GREEN);
+    CoreS3.Display.drawString("No", CoreS3.Display.width() / 2, 170);
+
+    wakeUpStartTime = millis();  // Record the time when the device wakes up
+    currentScreen = WAKE_UP_PROMPT;  // Set the screen state to WAKE_UP_PROMPT
+
+    while (true) {
+        CoreS3.update();
+        auto t = CoreS3.Touch.getDetail();
+
+        if (t.state == 3) {  // TOUCH_BEGIN - a touch was detected
+            if (t.y > 100 && t.y < 140) {  // User pressed "Yes"
+                CoreS3.Display.fillRect(40, 100, 220, 40, GREEN);
+                CoreS3.Display.drawString("Yes", CoreS3.Display.width() / 2, 120);
+                delay(200);
+                setupMainMenu();  // Go to the main menu
+                declineCount = 0;  // Reset decline counter
+                break;  // Exit the loop
+            } else if (t.y > 150 && t.y < 190) {  // User pressed "No"
+                CoreS3.Display.fillRect(40, 150, 220, 40, GREEN);
+                CoreS3.Display.drawString("No", CoreS3.Display.width() / 2, 170);
+                delay(200);
+                declineCount++;
+
+                if (declineCount >= 2) {
+                    goToLightSleep(60 + generateRandomInterval());  // Sleep for 60 minutes + random interval
+                } else {
+                    goToLightSleep(-1);  // Go back to sleep and wake up randomly
+                }
+                break;  // Exit the loop
+            }
+        }
+
+        if (millis() - wakeUpStartTime > 120000) {  // If no response within 2 minutes
+            goToLightSleep(-1);  // Go back to sleep
+            break;
+        }
+    }
+}
+
+void goToLightSleep(int delayMinutes) {
+    int randomMinutes = generateRandomInterval();
+    if (delayMinutes > 0) {
+        randomMinutes = delayMinutes;
+    }
+    
+    esp_sleep_enable_timer_wakeup(randomMinutes * 60 * 1000000);
+    esp_light_sleep_start();
+    
+    checkSpeedAndDecide();  // Check speed after waking up
+}
+
+void playSplashSound() {
+    // Simple representation of "Shave and a Haircut, two bits" sound using tones
+    M5.Speaker.tone(494, 200); delay(200);  // B4
+    M5.Speaker.tone(494, 200); delay(200);  // B4
+    M5.Speaker.tone(523, 200); delay(200);  // C5
+    M5.Speaker.tone(494, 200); delay(200);  // B4
+    M5.Speaker.tone(587, 200); delay(200);  // D5
+    M5.Speaker.tone(494, 400); delay(400);  // B4
+    M5.Speaker.tone(392, 400); delay(200);  // G4
+    M5.Speaker.tone(494, 600); delay(600);  // B4
+}
+
+void playDontStopBelievinSound() {
+    // Simplified melody for "Don't Stop Believin'"
+    M5.Speaker.tone(659, 200); delay(200);  // E5
+    M5.Speaker.tone(659, 200); delay(200);  // E5
+    M5.Speaker.tone(784, 200); delay(200);  // G5
+    M5.Speaker.tone(784, 200); delay(200);  // G5
+    M5.Speaker.tone(880, 400); delay(400);  // A5
+    M5.Speaker.tone(784, 400); delay(400);  // G5
+    M5.Speaker.tone(659, 400); delay(400);  // E5
+    M5.Speaker.tone(587, 600); delay(600);  // D5
+}
+
+void playWindows95ShutdownSound() {
+    // Simplified approximation of the Windows 95 shutdown sound using tones
+    M5.Speaker.tone(659, 200); delay(200);  // E5
+    M5.Speaker.tone(523, 200); delay(200);  // C5
+    M5.Speaker.tone(587, 200); delay(200);  // D5
+    M5.Speaker.tone(494, 400); delay(400);  // B4
+}
